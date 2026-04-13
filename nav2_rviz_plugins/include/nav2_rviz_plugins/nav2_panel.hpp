@@ -83,6 +83,9 @@ private:
   void timerEvent(QTimerEvent * event) override;
   bool isLoopValueValid(std::string & loop);
 
+  // Build a topic/service name with the configured namespace prefix
+  std::string namespacedName(const std::string & name) const;
+
   int unique_id {0};
   int goal_index_ = 0;
   int loop_count_ = 0;
@@ -91,6 +94,7 @@ private:
   bool loop_counter_stop_ = true;
   std::string loop_no_ = "0";
   std::string base_frame_;
+  std::string namespace_;
 
   // Call to send NavigateToPose action request for goal poses
   geometry_msgs::msg::PoseStamped convert_to_msg(
@@ -148,6 +152,7 @@ private:
   std::shared_ptr<nav2_lifecycle_manager::LifecycleManagerClient> client_nav_;
   std::shared_ptr<nav2_lifecycle_manager::LifecycleManagerClient> client_loc_;
 
+  QLineEdit * namespace_edit_{nullptr};
   QCheckBox * store_initial_pose_checkbox_{nullptr};
 
   QPushButton * start_reset_button_{nullptr};
@@ -167,7 +172,7 @@ private:
   QLineEdit * nr_of_loops_{nullptr};
 
   QStateMachine state_machine_;
-  InitialThread * initial_thread_;
+  InitialThread * initial_thread_{nullptr};
 
   QState * pre_initial_{nullptr};
   QState * initial_{nullptr};

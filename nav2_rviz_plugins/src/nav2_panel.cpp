@@ -63,6 +63,7 @@ Nav2Panel::Nav2Panel(QWidget * parent)
   waypoint_status_indicator_ = new QLabel;
   number_of_loops_ = new QLabel;
   nr_of_loops_ = new QLineEdit;
+  namespace_edit_ = new QLineEdit;
   store_initial_pose_checkbox_ = new QCheckBox("Store initial_pose");
 
   // Create the state machine used to present the proper control button states in the UI
@@ -77,21 +78,10 @@ Nav2Panel::Nav2Panel(QWidget * parent)
   const char * nft_goal_msg = "Start navigating through poses";
   const char * cancel_waypoint_msg = "Cancel waypoint / viapoint accumulation mode";
 
-  const QString navigation_active("<table><tr><td width=150><b>Navigation:</b></td>"
-    "<td><font color=green>active</color></td></tr></table>");
-  const QString navigation_inactive("<table><tr><td width=150><b>Navigation:</b></td>"
-    "<td>inactive</td></tr></table>");
-  const QString navigation_unknown("<table><tr><td width=150><b>Navigation:</b></td>"
-    "<td>unknown</td></tr></table>");
-  const QString localization_active("<table><tr><td width=150><b>Localization:</b></td>"
-    "<td><font color=green>active</color></td></tr></table>");
-  const QString localization_inactive("<table><tr><td width=150><b>Localization:</b></td>"
-    "<td>inactive</td></tr></table>");
-  const QString localization_unknown("<table><tr><td width=150><b>Localization:</b></td>"
-    "<td>unknown</td></tr></table>");
-
-  navigation_status_indicator_->setText(navigation_unknown);
-  localization_status_indicator_->setText(localization_unknown);
+  navigation_status_indicator_->setText(
+    "<table><tr><td width=150><b>Navigation:</b></td><td>unknown</td></tr></table>");
+  localization_status_indicator_->setText(
+    "<table><tr><td width=150><b>Localization:</b></td><td>unknown</td></tr></table>");
   navigation_goal_status_indicator_->setText(nav2_rviz_plugins::getGoalStatusLabel());
   number_of_loops_->setText("Num of loops");
   navigation_feedback_indicator_->setText(getNavThroughPosesFeedbackLabel());
@@ -455,47 +445,6 @@ Nav2Panel::Nav2Panel(QWidget * parent)
     {"--ros-args", "--remap", "__node:=rviz_navigation_dialog_action_client", "--"});
   client_node_ = std::make_shared<rclcpp::Node>("_", options);
 
-  client_nav_ = std::make_shared<nav2_lifecycle_manager::LifecycleManagerClient>(
-    "lifecycle_manager_navigation", client_node_);
-  client_loc_ = std::make_shared<nav2_lifecycle_manager::LifecycleManagerClient>(
-    "lifecycle_manager_localization", client_node_);
-  initial_thread_ = new InitialThread(client_nav_, client_loc_);
-  connect(initial_thread_, &InitialThread::finished, initial_thread_, &QObject::deleteLater);
-
-  QSignalTransition * activeSignal = new QSignalTransition(
-    initial_thread_,
-    &InitialThread::navigationActive);
-  activeSignal->setTargetState(idle_);
-  pre_initial_->addTransition(activeSignal);
-  QSignalTransition * inactiveSignal = new QSignalTransition(
-    initial_thread_,
-    &InitialThread::navigationInactive);
-  inactiveSignal->setTargetState(initial_);
-  pre_initial_->addTransition(inactiveSignal);
-
-  QObject::connect(
-    initial_thread_, &InitialThread::navigationActive,
-    [this, navigation_active] {
-      navigation_status_indicator_->setText(navigation_active);
-    });
-  QObject::connect(
-    initial_thread_, &InitialThread::navigationInactive,
-    [this, navigation_inactive] {
-      navigation_status_indicator_->setText(navigation_inactive);
-      navigation_goal_status_indicator_->setText(nav2_rviz_plugins::getGoalStatusLabel());
-      navigation_feedback_indicator_->setText(getNavThroughPosesFeedbackLabel());
-    });
-  QObject::connect(
-    initial_thread_, &InitialThread::localizationActive,
-    [this, localization_active] {
-      localization_status_indicator_->setText(localization_active);
-    });
-  QObject::connect(
-    initial_thread_, &InitialThread::localizationInactive,
-    [this, localization_inactive] {
-      localization_status_indicator_->setText(localization_inactive);
-    });
-
   state_machine_.addState(pre_initial_);
   state_machine_.addState(initial_);
   state_machine_.addState(idle_);
@@ -511,12 +460,11 @@ Nav2Panel::Nav2Panel(QWidget * parent)
 
   state_machine_.setInitialState(pre_initial_);
 
-  // delay starting initial thread until state machine has started or a race occurs
-  QObject::connect(&state_machine_, SIGNAL(started()), this, SLOT(startThread()));
   state_machine_.start();
 
   // Lay out the items in the panel
   QVBoxLayout * main_layout = new QVBoxLayout;
+  QHBoxLayout * namespace_layout = new QHBoxLayout;
   QHBoxLayout * side_layout = new QHBoxLayout;
   QVBoxLayout * status_layout = new QVBoxLayout;
   QHBoxLayout * logo_layout = new QHBoxLayout;
@@ -527,6 +475,14 @@ Nav2Panel::Nav2Panel(QWidget * parent)
   imgDisplayLabel_->setPixmap(
     rviz_common::loadPixmap("package://nav2_rviz_plugins/icons/classes/nav2_logo_small.png"));
 
+  namespace_edit_->setPlaceholderText("e.g. navigation");
+  namespace_edit_->setToolTip(
+    "Nav2 namespace — prefix for action servers and lifecycle managers. "
+    "Leave empty for the default (root) namespace.");
+  QLabel * namespace_label = new QLabel("Namespace:");
+  namespace_layout->addWidget(namespace_label);
+  namespace_layout->addWidget(namespace_edit_);
+
   status_layout->addWidget(navigation_status_indicator_);
   status_layout->addWidget(localization_status_indicator_);
   status_layout->addWidget(navigation_goal_status_indicator_);
@@ -536,6 +492,7 @@ Nav2Panel::Nav2Panel(QWidget * parent)
   side_layout->addLayout(status_layout);
   side_layout->addLayout(logo_layout);
 
+  main_layout->addLayout(namespace_layout);
   main_layout->addLayout(side_layout);
   main_layout->addWidget(navigation_feedback_indicator_);
   main_layout->addWidget(waypoint_status_indicator_);
@@ -563,35 +520,9 @@ Nav2Panel::Nav2Panel(QWidget * parent)
   main_layout->setContentsMargins(10, 10, 10, 10);
   setLayout(main_layout);
 
-  navigation_action_client_ =
-    rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
-    client_node_,
-    "navigate_to_pose");
-  waypoint_follower_action_client_ =
-    rclcpp_action::create_client<nav2_msgs::action::FollowWaypoints>(
-    client_node_,
-    "follow_waypoints");
-  nav_through_poses_action_client_ =
-    rclcpp_action::create_client<nav2_msgs::action::NavigateThroughPoses>(
-    client_node_,
-    "navigate_through_poses");
-
-  // Setting up tf for initial pose
-  tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(client_node_->get_clock());
-  auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
-    client_node_->get_node_base_interface(),
-    client_node_->get_node_timers_interface());
-  tf2_buffer_->setCreateTimerInterface(timer_interface);
-  transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
-
   navigation_goal_ = nav2_msgs::action::NavigateToPose::Goal();
   waypoint_follower_goal_ = nav2_msgs::action::FollowWaypoints::Goal();
   nav_through_poses_goal_ = nav2_msgs::action::NavigateThroughPoses::Goal();
-
-  wp_navigation_markers_pub_ =
-    client_node_->create_publisher<visualization_msgs::msg::MarkerArray>(
-    "waypoints",
-    rclcpp::QoS(1).transient_local());
 
   QObject::connect(
     &GoalUpdater, SIGNAL(updateGoal(double,double,double,QString)),                 // NOLINT
@@ -773,6 +704,15 @@ void Nav2Panel::handleGoalSaver()
   }
 }
 
+std::string
+Nav2Panel::namespacedName(const std::string & name) const
+{
+  if (namespace_.empty()) {
+    return name;
+  }
+  return namespace_ + "/" + name;
+}
+
 void
 Nav2Panel::onInitialize()
 {
@@ -782,10 +722,96 @@ Nav2Panel::onInitialize()
   node->declare_parameter("base_frame", rclcpp::ParameterValue(std::string("base_footprint")));
   node->get_parameter("base_frame", base_frame_);
 
-  // create action feedback subscribers
+  // Apply namespace from config (loaded before onInitialize)
+  namespace_ = namespace_edit_->text().toStdString();
+
+  // Create lifecycle manager clients with namespace
+  client_nav_ = std::make_shared<nav2_lifecycle_manager::LifecycleManagerClient>(
+    namespacedName("lifecycle_manager_navigation"), client_node_);
+  client_loc_ = std::make_shared<nav2_lifecycle_manager::LifecycleManagerClient>(
+    namespacedName("lifecycle_manager_localization"), client_node_);
+
+  // Create initial thread and wire up signals
+  initial_thread_ = new InitialThread(client_nav_, client_loc_);
+  connect(initial_thread_, &InitialThread::finished, initial_thread_, &QObject::deleteLater);
+
+  const QString navigation_active("<table><tr><td width=150><b>Navigation:</b></td>"
+    "<td><font color=green>active</color></td></tr></table>");
+  const QString navigation_inactive("<table><tr><td width=150><b>Navigation:</b></td>"
+    "<td>inactive</td></tr></table>");
+  const QString localization_active("<table><tr><td width=150><b>Localization:</b></td>"
+    "<td><font color=green>active</color></td></tr></table>");
+  const QString localization_inactive("<table><tr><td width=150><b>Localization:</b></td>"
+    "<td>inactive</td></tr></table>");
+
+  QSignalTransition * activeSignal = new QSignalTransition(
+    initial_thread_,
+    &InitialThread::navigationActive);
+  activeSignal->setTargetState(idle_);
+  pre_initial_->addTransition(activeSignal);
+  QSignalTransition * inactiveSignal = new QSignalTransition(
+    initial_thread_,
+    &InitialThread::navigationInactive);
+  inactiveSignal->setTargetState(initial_);
+  pre_initial_->addTransition(inactiveSignal);
+
+  QObject::connect(
+    initial_thread_, &InitialThread::navigationActive,
+    [this, navigation_active] {
+      navigation_status_indicator_->setText(navigation_active);
+    });
+  QObject::connect(
+    initial_thread_, &InitialThread::navigationInactive,
+    [this, navigation_inactive] {
+      navigation_status_indicator_->setText(navigation_inactive);
+      navigation_goal_status_indicator_->setText(nav2_rviz_plugins::getGoalStatusLabel());
+      navigation_feedback_indicator_->setText(getNavThroughPosesFeedbackLabel());
+    });
+  QObject::connect(
+    initial_thread_, &InitialThread::localizationActive,
+    [this, localization_active] {
+      localization_status_indicator_->setText(localization_active);
+    });
+  QObject::connect(
+    initial_thread_, &InitialThread::localizationInactive,
+    [this, localization_inactive] {
+      localization_status_indicator_->setText(localization_inactive);
+    });
+
+  // Start the initial thread now that signals are connected
+  initial_thread_->start();
+
+  // Create action clients with namespace
+  navigation_action_client_ =
+    rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
+    client_node_,
+    namespacedName("navigate_to_pose"));
+  waypoint_follower_action_client_ =
+    rclcpp_action::create_client<nav2_msgs::action::FollowWaypoints>(
+    client_node_,
+    namespacedName("follow_waypoints"));
+  nav_through_poses_action_client_ =
+    rclcpp_action::create_client<nav2_msgs::action::NavigateThroughPoses>(
+    client_node_,
+    namespacedName("navigate_through_poses"));
+
+  // Setting up tf for initial pose
+  tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(client_node_->get_clock());
+  auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
+    client_node_->get_node_base_interface(),
+    client_node_->get_node_timers_interface());
+  tf2_buffer_->setCreateTimerInterface(timer_interface);
+  transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
+
+  wp_navigation_markers_pub_ =
+    client_node_->create_publisher<visualization_msgs::msg::MarkerArray>(
+    "waypoints",
+    rclcpp::QoS(1).transient_local());
+
+  // create action feedback subscribers with namespace
   navigation_feedback_sub_ =
     node->create_subscription<nav2_msgs::action::NavigateToPose::Impl::FeedbackMessage>(
-    "navigate_to_pose/_action/feedback",
+    namespacedName("navigate_to_pose/_action/feedback"),
     rclcpp::SystemDefaultsQoS(),
     [this](const nav2_msgs::action::NavigateToPose::Impl::FeedbackMessage::SharedPtr msg) {
       if (stoi(nr_of_loops_->displayText().toStdString()) > 0) {
@@ -810,15 +836,15 @@ Nav2Panel::onInitialize()
     });
   nav_through_poses_feedback_sub_ =
     node->create_subscription<nav2_msgs::action::NavigateThroughPoses::Impl::FeedbackMessage>(
-    "navigate_through_poses/_action/feedback",
+    namespacedName("navigate_through_poses/_action/feedback"),
     rclcpp::SystemDefaultsQoS(),
     [this](const nav2_msgs::action::NavigateThroughPoses::Impl::FeedbackMessage::SharedPtr msg) {
       navigation_feedback_indicator_->setText(getNavThroughPosesFeedbackLabel(msg->feedback));
     });
 
-  // create action goal status subscribers
+  // create action goal status subscribers with namespace
   navigation_goal_status_sub_ = node->create_subscription<action_msgs::msg::GoalStatusArray>(
-    "navigate_to_pose/_action/status",
+    namespacedName("navigate_to_pose/_action/status"),
     rclcpp::SystemDefaultsQoS(),
     [this](const action_msgs::msg::GoalStatusArray::SharedPtr msg) {
       navigation_goal_status_indicator_->setText(
@@ -837,7 +863,7 @@ Nav2Panel::onInitialize()
       }
     });
   nav_through_poses_goal_status_sub_ = node->create_subscription<action_msgs::msg::GoalStatusArray>(
-    "navigate_through_poses/_action/status",
+    namespacedName("navigate_through_poses/_action/status"),
     rclcpp::SystemDefaultsQoS(),
     [this](const action_msgs::msg::GoalStatusArray::SharedPtr msg) {
       navigation_goal_status_indicator_->setText(
@@ -851,8 +877,7 @@ Nav2Panel::onInitialize()
 void
 Nav2Panel::startThread()
 {
-  // start initial thread now that state machine is started
-  initial_thread_->start();
+  // No-op: initial thread is now started in onInitialize() after namespace config is loaded
 }
 
 void
@@ -1345,12 +1370,18 @@ void
 Nav2Panel::save(rviz_common::Config config) const
 {
   Panel::save(config);
+  config.mapSetValue("namespace", QString::fromStdString(namespace_));
 }
 
 void
 Nav2Panel::load(const rviz_common::Config & config)
 {
   Panel::load(config);
+  QString ns;
+  if (config.mapGetString("namespace", &ns)) {
+    namespace_ = ns.toStdString();
+    namespace_edit_->setText(ns);
+  }
 }
 
 void
