@@ -95,6 +95,8 @@ private:
   std::string loop_no_ = "0";
   std::string base_frame_;
   std::string namespace_;
+  std::string nav_lifecycle_name_;
+  std::string loc_lifecycle_name_;
 
   // Call to send NavigateToPose action request for goal poses
   geometry_msgs::msg::PoseStamped convert_to_msg(
@@ -153,6 +155,8 @@ private:
   std::shared_ptr<nav2_lifecycle_manager::LifecycleManagerClient> client_loc_;
 
   QLineEdit * namespace_edit_{nullptr};
+  QLineEdit * nav_lifecycle_edit_{nullptr};
+  QLineEdit * loc_lifecycle_edit_{nullptr};
   QCheckBox * store_initial_pose_checkbox_{nullptr};
 
   QPushButton * start_reset_button_{nullptr};

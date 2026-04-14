@@ -63,7 +63,9 @@ Nav2Panel::Nav2Panel(QWidget * parent)
   waypoint_status_indicator_ = new QLabel;
   number_of_loops_ = new QLabel;
   nr_of_loops_ = new QLineEdit;
-  namespace_edit_ = new QLineEdit;
+  namespace_edit_ = new QLineEdit("navigation");
+  nav_lifecycle_edit_ = new QLineEdit("lifecycle_manager");
+  loc_lifecycle_edit_ = new QLineEdit("lifecycle_manager");
   store_initial_pose_checkbox_ = new QCheckBox("Store initial_pose");
 
   // Create the state machine used to present the proper control button states in the UI
@@ -479,9 +481,23 @@ Nav2Panel::Nav2Panel(QWidget * parent)
   namespace_edit_->setToolTip(
     "Nav2 namespace — prefix for action servers and lifecycle managers. "
     "Leave empty for the default (root) namespace.");
+  nav_lifecycle_edit_->setPlaceholderText("e.g. lifecycle_manager_navigation");
+  nav_lifecycle_edit_->setToolTip(
+    "Node name of the navigation lifecycle manager.");
+  loc_lifecycle_edit_->setPlaceholderText("e.g. lifecycle_manager_localization");
+  loc_lifecycle_edit_->setToolTip(
+    "Node name of the localization lifecycle manager.");
   QLabel * namespace_label = new QLabel("Namespace:");
+  QLabel * nav_lifecycle_label = new QLabel("Nav Lifecycle:");
+  QLabel * loc_lifecycle_label = new QLabel("Loc Lifecycle:");
   namespace_layout->addWidget(namespace_label);
   namespace_layout->addWidget(namespace_edit_);
+  QHBoxLayout * nav_lifecycle_layout = new QHBoxLayout;
+  nav_lifecycle_layout->addWidget(nav_lifecycle_label);
+  nav_lifecycle_layout->addWidget(nav_lifecycle_edit_);
+  QHBoxLayout * loc_lifecycle_layout = new QHBoxLayout;
+  loc_lifecycle_layout->addWidget(loc_lifecycle_label);
+  loc_lifecycle_layout->addWidget(loc_lifecycle_edit_);
 
   status_layout->addWidget(navigation_status_indicator_);
   status_layout->addWidget(localization_status_indicator_);
@@ -493,6 +509,8 @@ Nav2Panel::Nav2Panel(QWidget * parent)
   side_layout->addLayout(logo_layout);
 
   main_layout->addLayout(namespace_layout);
+  main_layout->addLayout(nav_lifecycle_layout);
+  main_layout->addLayout(loc_lifecycle_layout);
   main_layout->addLayout(side_layout);
   main_layout->addWidget(navigation_feedback_indicator_);
   main_layout->addWidget(waypoint_status_indicator_);
@@ -722,14 +740,19 @@ Nav2Panel::onInitialize()
   node->declare_parameter("base_frame", rclcpp::ParameterValue(std::string("base_footprint")));
   node->get_parameter("base_frame", base_frame_);
 
-  // Apply namespace from config (loaded before onInitialize)
+  // Apply namespace and lifecycle manager names from config (loaded before onInitialize)
   namespace_ = namespace_edit_->text().toStdString();
+  nav_lifecycle_name_ = nav_lifecycle_edit_->text().toStdString();
+  loc_lifecycle_name_ = loc_lifecycle_edit_->text().toStdString();
 
-  // Create lifecycle manager clients with namespace
+  // Create lifecycle manager clients with namespace.
+  // Default: "navigation/lifecycle_manager" → /navigation/lifecycle_manager/is_active.
+  // For the stock Nav2 layout (no namespace, separate lifecycle managers), set
+  // namespace to empty and names to "lifecycle_manager_navigation" / "lifecycle_manager_localization".
   client_nav_ = std::make_shared<nav2_lifecycle_manager::LifecycleManagerClient>(
-    namespacedName("lifecycle_manager_navigation"), client_node_);
+    namespacedName(nav_lifecycle_name_), client_node_);
   client_loc_ = std::make_shared<nav2_lifecycle_manager::LifecycleManagerClient>(
-    namespacedName("lifecycle_manager_localization"), client_node_);
+    namespacedName(loc_lifecycle_name_), client_node_);
 
   // Create initial thread and wire up signals
   initial_thread_ = new InitialThread(client_nav_, client_loc_);
@@ -1371,6 +1394,8 @@ Nav2Panel::save(rviz_common::Config config) const
 {
   Panel::save(config);
   config.mapSetValue("namespace", QString::fromStdString(namespace_));
+  config.mapSetValue("nav_lifecycle_name", QString::fromStdString(nav_lifecycle_name_));
+  config.mapSetValue("loc_lifecycle_name", QString::fromStdString(loc_lifecycle_name_));
 }
 
 void
@@ -1381,6 +1406,15 @@ Nav2Panel::load(const rviz_common::Config & config)
   if (config.mapGetString("namespace", &ns)) {
     namespace_ = ns.toStdString();
     namespace_edit_->setText(ns);
+  }
+  QString nav_lc, loc_lc;
+  if (config.mapGetString("nav_lifecycle_name", &nav_lc)) {
+    nav_lifecycle_name_ = nav_lc.toStdString();
+    nav_lifecycle_edit_->setText(nav_lc);
+  }
+  if (config.mapGetString("loc_lifecycle_name", &loc_lc)) {
+    loc_lifecycle_name_ = loc_lc.toStdString();
+    loc_lifecycle_edit_->setText(loc_lc);
   }
 }
 
